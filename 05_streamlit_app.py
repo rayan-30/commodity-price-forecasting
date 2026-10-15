@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+import yfinance as yf
 from plotly.subplots import make_subplots
 import warnings
 warnings.filterwarnings('ignore')
@@ -27,34 +28,47 @@ st.markdown("---")
 # ── Load Data ─────────────────────────────────────────────────
 @st.cache_data
 def load_data():
-    commodities = ['BRENT', 'WTI', 'NATURAL_GAS', 'RBOB', 'HEATING_OIL']
+    tickers = {
+        'BRENT'      : 'BZ=F',
+        'WTI'        : 'CL=F',
+        'NATURAL_GAS': 'NG=F',
+        'RBOB'       : 'RB=F',
+        'HEATING_OIL': 'HO=F'
+    }
+    
     data = {}
-    for name in commodities:
-        df = pd.read_csv(f'data/{name}.csv',
-                         index_col='Date',
-                         parse_dates=True)
+    for name, symbol in tickers.items():
+        df = yf.download(symbol, 
+                        start='2010-01-01',
+                        progress=False)
+        
+        # Fix column names
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [col[0] for col in df.columns]
+        
         column_mapping = {
             'C':'Close','H':'High',
             'L':'Low','O':'Open','V':'Volume'
         }
         df.rename(columns=column_mapping, inplace=True)
-        df['Log_Return'] = np.log(df['Close'] / df['Close'].shift(1))
-
-        # Add regime
+        
+        df['Log_Return'] = np.log(
+            df['Close'] / df['Close'].shift(1))
+        
+        # Regime detection
         rolling_return = df['Log_Return'].rolling(63).mean()
-        df['Regime'] = np.where(rolling_return >  0.0005,  1,
-                       np.where(rolling_return < -0.0005, -1, 0))
+        df['Regime'] = np.where(
+            rolling_return >  0.0005,  1,
+            np.where(
+            rolling_return < -0.0005, -1, 0))
         df['Regime_Label'] = df['Regime'].map(
             {1:'Bull', -1:'Bear', 0:'Choppy'})
-
+        
         # Rolling volatility
         df['Rolling_Vol'] = (df['Log_Return']
-                             .rolling(30).std() * np.sqrt(252) * 100)
+                            .rolling(30).std() * np.sqrt(252) * 100)
         data[name] = df
     return data
-
-data = load_data()
-
 # ── Sidebar ───────────────────────────────────────────────────
 st.sidebar.header("⚙️ Controls")
 
@@ -173,7 +187,7 @@ if show_volume:
     )
     st.plotly_chart(fig_vol_bar, use_container_width=True)
 
-    
+
 # ── Returns and Volatility ────────────────────────────────────
 st.subheader("📊 Returns & Volatility Analysis")
 
