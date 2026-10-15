@@ -9,5 +9,5 @@ prophet
 tensorflow
 pmdarima
 yfinance
-matplotlib
 seaborn
+matplotlib
