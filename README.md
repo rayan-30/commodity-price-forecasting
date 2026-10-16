@@ -6,7 +6,7 @@ built on 15 years of daily OHLCV data for BRENT, WTI,
 Natural Gas, RBOB and Heating Oil.
 
 ## Live Dashboard
-[View Dashboard →](https://your-app-url.streamlit.app)
+[View Dashboard →](https://commodity-price-forecasting-tc7mivrsfbrw9c89trjszv.streamlit.app/)
 
 ## Project Structure
 01_data_collection.ipynb → Data pipeline (yfinance, EIA)
