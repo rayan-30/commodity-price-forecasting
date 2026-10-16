@@ -9,7 +9,6 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 import yfinance as yf
-from plotly.subplots import make_subplots
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -35,46 +34,78 @@ def load_data():
         'RBOB'       : 'RB=F',
         'HEATING_OIL': 'HO=F'
     }
-    
+
     data = {}
     for name, symbol in tickers.items():
-        df = yf.download(symbol, 
-                        start='2010-01-01',
-                        progress=False)
-        
-        # Fix column names
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [col[0] for col in df.columns]
-        
-        column_mapping = {
-            'C':'Close','H':'High',
-            'L':'Low','O':'Open','V':'Volume'
-        }
-        df.rename(columns=column_mapping, inplace=True)
-        
-        df['Log_Return'] = np.log(
-            df['Close'] / df['Close'].shift(1))
-        
-        # Regime detection
-        rolling_return = df['Log_Return'].rolling(63).mean()
-        df['Regime'] = np.where(
-            rolling_return >  0.0005,  1,
-            np.where(
-            rolling_return < -0.0005, -1, 0))
-        df['Regime_Label'] = df['Regime'].map(
-            {1:'Bull', -1:'Bear', 0:'Choppy'})
-        
-        # Rolling volatility
-        df['Rolling_Vol'] = (df['Log_Return']
-                            .rolling(30).std() * np.sqrt(252) * 100)
-        data[name] = df
+        try:
+            df = yf.download(symbol,
+                            start='2010-01-01',
+                            progress=False,
+                            auto_adjust=True)
+
+            if df.empty:
+                st.warning(f"No data returned for {name}")
+                continue
+
+            # Fix MultiIndex columns
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = [col[0] for col in df.columns]
+
+            # Rename shortened columns
+            column_mapping = {
+                'C':'Close','H':'High',
+                'L':'Low','O':'Open','V':'Volume'
+            }
+            df.rename(columns=column_mapping, inplace=True)
+
+            # Ensure Close column exists
+            if 'Close' not in df.columns:
+                df.columns = ['Close','High','Low','Open','Volume']
+
+            df = df.dropna(subset=['Close'])
+
+            # Log returns
+            df['Log_Return'] = np.log(
+                df['Close'] / df['Close'].shift(1))
+
+            # Regime detection
+            rolling_return = df['Log_Return'].rolling(63).mean()
+            df['Regime'] = np.where(
+                rolling_return >  0.0005,  1,
+                np.where(
+                rolling_return < -0.0005, -1, 0))
+            df['Regime_Label'] = df['Regime'].map(
+                {1:'Bull', -1:'Bear', 0:'Choppy'})
+
+            # Rolling volatility
+            df['Rolling_Vol'] = (df['Log_Return']
+                                .rolling(30).std() * np.sqrt(252) * 100)
+
+            data[name] = df
+
+        except Exception as e:
+            st.warning(f"Failed to load {name}: {str(e)}")
+            continue
+
     return data
+
+# Load data with spinner
+with st.spinner("Loading commodity data from Yahoo Finance..."):
+    data = load_data()
+
+# Safety check
+if not data:
+    st.error("Failed to load data. Please refresh the page.")
+    st.stop()
+
+available_commodities = list(data.keys())
+
 # ── Sidebar ───────────────────────────────────────────────────
 st.sidebar.header("⚙️ Controls")
 
 selected_commodity = st.sidebar.selectbox(
     "Select Commodity",
-    ['BRENT', 'WTI', 'NATURAL_GAS', 'RBOB', 'HEATING_OIL'],
+    available_commodities,
     index=0
 )
 
@@ -87,8 +118,10 @@ date_range = st.sidebar.selectbox(
     index=2
 )
 
-show_regime = st.sidebar.checkbox("Show Regime Background", value=True)
-show_volume = st.sidebar.checkbox("Show Volume", value=False)
+show_regime = st.sidebar.checkbox(
+    "Show Regime Background", value=True)
+show_volume = st.sidebar.checkbox(
+    "Show Volume", value=False)
 
 # ── Filter by date ────────────────────────────────────────────
 df = data[selected_commodity].copy()
@@ -119,8 +152,7 @@ col1.metric("Current Price",
             f"{pct_change:+.2f}%")
 col2.metric("Period High",  f"${period_high:.2f}")
 col3.metric("Period Low",   f"${period_low:.2f}")
-col4.metric("Current Regime", current_regime,
-            delta=None)
+col4.metric("Current Regime", current_regime)
 col5.metric("30D Volatility", f"{avg_vol:.1f}%")
 
 st.markdown("---")
@@ -132,14 +164,17 @@ fig = go.Figure()
 
 # Regime background
 if show_regime:
-    regime_colors = {1:'rgba(76,175,80,0.15)',
-                    -1:'rgba(255,87,34,0.15)',
-                     0:'rgba(255,249,196,0.15)'}
+    regime_colors = {
+         1: 'rgba(76,175,80,0.15)',
+        -1: 'rgba(255,87,34,0.15)',
+         0: 'rgba(255,249,196,0.15)'
+    }
     current_regime_val = df['Regime'].iloc[0]
     start_date = df.index[0]
 
     for i in range(1, len(df)):
-        if df['Regime'].iloc[i] != current_regime_val or i == len(df)-1:
+        if df['Regime'].iloc[i] != current_regime_val \
+                or i == len(df)-1:
             fig.add_vrect(
                 x0=start_date,
                 x1=df.index[i],
@@ -168,7 +203,7 @@ fig.update_layout(
 )
 st.plotly_chart(fig, use_container_width=True)
 
-# ── Volume Chart ─────────────────────────────────────────────
+# ── Volume Chart ──────────────────────────────────────────────
 if show_volume:
     st.subheader("📦 Trading Volume")
     fig_vol_bar = go.Figure()
@@ -187,7 +222,6 @@ if show_volume:
     )
     st.plotly_chart(fig_vol_bar, use_container_width=True)
 
-
 # ── Returns and Volatility ────────────────────────────────────
 st.subheader("📊 Returns & Volatility Analysis")
 
@@ -204,8 +238,8 @@ with col1:
     st.plotly_chart(fig_ret, use_container_width=True)
 
 with col2:
-    fig_vol = go.Figure()
-    fig_vol.add_trace(go.Scatter(
+    fig_vol2 = go.Figure()
+    fig_vol2.add_trace(go.Scatter(
         x=df.index,
         y=df['Rolling_Vol'],
         mode='lines',
@@ -214,12 +248,12 @@ with col2:
         fill='tozeroy',
         fillcolor='rgba(255,87,34,0.1)'
     ))
-    fig_vol.update_layout(
+    fig_vol2.update_layout(
         title=f'{selected_commodity} 30-Day Rolling Volatility (%)',
         height=350,
         yaxis_title='Annualised Volatility (%)'
     )
-    st.plotly_chart(fig_vol, use_container_width=True)
+    st.plotly_chart(fig_vol2, use_container_width=True)
 
 # ── Correlation Heatmap ───────────────────────────────────────
 st.subheader("🔗 Cross-Commodity Correlation (Returns)")
@@ -245,7 +279,7 @@ st.plotly_chart(fig_corr, use_container_width=True)
 st.subheader("🤖 Model Performance Comparison")
 
 results = {
-    'Naive'  : {'MAE': '-',   'RMSE': '-',   'MAPE': '1.69%'},
+    'Naive'  : {'MAE': '-',      'RMSE': '-',      'MAPE': '1.69%'},
     'SARIMA' : {'MAE': '$10.75', 'RMSE': '$13.03', 'MAPE': '14.49%'},
     'Prophet': {'MAE': '$10.70', 'RMSE': '$13.05', 'MAPE': '12.99%'},
     'XGBoost': {'MAE': '$1.03',  'RMSE': '$1.57',  'MAPE': '1.26%'},
@@ -259,14 +293,41 @@ st.dataframe(results_df, use_container_width=True)
 st.info("""
 **Champion Model: XGBoost (MAPE: 1.26%)**
 XGBoost outperformed all models including the naive baseline (1.69% MAPE).
-SARIMA and Prophet performed worse than naive — consistent with 
+SARIMA and Prophet performed worse than naive — consistent with
 Efficient Market Hypothesis for daily commodity returns.
 """)
 
-# ── Footer ─────────────────────────────────────────────────────
+# ── Backtest Results ──────────────────────────────────────────
+st.subheader("📉 Backtest Results (2023-2026)")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown("**Regime + XGBoost Strategy**")
+    st.metric("Annual Return",  "0.98%")
+    st.metric("Sharpe Ratio",   "0.036")
+    st.metric("Max Drawdown",   "-56.76%")
+    st.metric("Win Rate",       "20.36%")
+
+with col2:
+    st.markdown("**Buy and Hold Benchmark**")
+    st.metric("Annual Return",  "6.47%")
+    st.metric("Sharpe Ratio",   "0.171")
+    st.metric("Max Drawdown",   "-50.30%")
+    st.metric("Win Rate",       "52.53%")
+
+st.warning("""
+**Finding:** Strategy underperformed buy and hold.
+Daily BRENT returns follow near-efficient random walk —
+historical price data alone is insufficient for alpha generation.
+Alternative data (EIA inventories, options flow) needed for
+reliable trading signals.
+""")
+
+# ── Footer ────────────────────────────────────────────────────
 st.markdown("---")
 st.markdown("""
-**Project by Rayan Rawat** | 
-NIT Bhopal | 
-[GitHub](https://github.com/rayan-30/commodity-price-forecasting)
+**Project by Rayan Rawat** | NIT Bhopal | 
+Ex-Financial Market Analyst at Futures First |
+[GitHub](https://github.com/ayan-30/commodity-price-forecasting)
 """)
